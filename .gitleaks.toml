@@ -1,0 +1,15 @@
+title = "csp-agent-passport gitleaks config"
+
+# Convention: allowlist entries must be path-scoped to a specific file (or
+# narrow file set) with an inline comment justifying why the flagged value
+# is not a secret. Never add a blanket/global rule, and never disable a
+# default rule (e.g. generic-api-key) repo-wide — that silences it
+# everywhere, not just at the false-positive site.
+
+[extend]
+useDefault = true
+
+[[allowlists]]
+description = '.env.example is a committed template: its CSP_CLIENT_ID/CSP_CLIENT_SECRET assignments are deliberately empty, and its only path-shaped value is the literal placeholder /path/to/private-key.pem. The real .env, *.pem, *.key, *.p12, and *.pfx are already gitignored. Measured: as of gitleaks 8.18.4 and 8.28.0 this entry matches nothing (both report "no leaks found" across the tree and full history) -- it is a convention template / guard against the most likely future false positive, not a live suppression.'
+paths = ['''^\.env\.example$''']
+regexes = ['''(?i)(client_secret|client_id)\s*=\s*$''', '''/path/to/private-key\.pem''']
