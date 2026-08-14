@@ -9,7 +9,13 @@ title = "csp-agent-passport gitleaks config"
 [extend]
 useDefault = true
 
-[[allowlists]]
-description = '.env.example is a committed template: its CSP_CLIENT_ID/CSP_CLIENT_SECRET assignments are deliberately empty, and its only path-shaped value is the literal placeholder /path/to/private-key.pem. The real .env, *.pem, *.key, *.p12, and *.pfx are already gitignored. Measured: as of gitleaks 8.18.4 and 8.28.0 this entry matches nothing (both report "no leaks found" across the tree and full history) -- it is a convention template / guard against the most likely future false positive, not a live suppression.'
+# NOTE: this must be the singular `[allowlist]` table, not `[[allowlists]]`.
+# Verified against the gitleaks version gitleaks-action@v2 actually installs
+# in CI (8.24.3) as well as 8.30.1: the plural `[[allowlists]]` array form is
+# silently dropped by 8.24.3 (entry has zero effect), while `[allowlist]`
+# works on both. `paths` and `regexes` inside one allowlist are OR'd, not
+# AND'd, so a regexes clause here would suppress matches repo-wide, not just
+# in the file the `paths` entry names -- keep this to `paths` only.
+[allowlist]
+description = '.env.example is a committed template: its CSP_CLIENT_ID/CSP_CLIENT_SECRET assignments are deliberately empty, and its only path-shaped value is the literal placeholder /path/to/private-key.pem. The real .env, *.pem, *.key, *.p12, and *.pfx are already gitignored. Measured: as of gitleaks 8.24.3 and 8.30.1 this entry matches nothing (both report "no leaks found" across the tree and full history) -- it is a convention template / guard against the most likely future false positive, not a live suppression.'
 paths = ['''^\.env\.example$''']
-regexes = ['''(?i)(client_secret|client_id)\s*=\s*$''', '''/path/to/private-key\.pem''']
