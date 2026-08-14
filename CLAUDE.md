@@ -1,6 +1,6 @@
 # Agent Passport
 
-> Verifiable, identity-rooted delegation tokens for AI agents — built on existing standards (OIDC, OAuth 2.0 Token Exchange, JWT, NIST SP 800-63 Vectors of Trust).
+> Verifiable, identity-rooted delegation tokens for AI agents — built on existing standards (OIDC, OAuth 2.0 Token Exchange, JWT, NIST SP 800-63-3 assurance levels).
 
 This file is project context for Claude Code. Read it first; it captures decisions already made so you don't re-litigate them and so the implementation stays aligned with NIST's AI Agent Standards Initiative.
 
@@ -24,8 +24,29 @@ This project is a deliberate, concrete contribution to the **Agent Identity & Au
 ## Audience and primary deliverable
 
 - **Audience:** developers building AI agent frameworks (LangChain, LlamaIndex, AutoGen, MCP runtimes) who need a drop-in identity/authorization primitive.
-- **Primary deliverable:** an open-source Python library (`agent-passport`) plus a CLI demo and a small set of `examples/`.
+- **Primary deliverable:** an open-source Python library (`csp-agent-passport`) plus a CLI demo and a small set of `examples/`.
 - **Explicitly not in scope (for v0):** a hosted dashboard, a TypeScript SDK, key rotation infrastructure, a production-grade key store. These are deferred until the primitives are right.
+
+---
+
+## Naming and endorsement
+
+The PyPI package, Python import, and CLI binary are all named `csp-agent-passport` (snake-case `csp_agent_passport` for imports). The "CSP" prefix is NIST SP 800-63 terminology for **Credential Service Provider** — accurate to this project's substrate role (it consumes a CSP's OIDC assertion and mints delegation tokens from it) without claiming NIST endorsement.
+
+[NIST's published policy](https://www.nist.gov/open/license) forbids implying NIST approves or endorses any product, and a `nist-` prefix from a non-NIST author crosses that line. There is no formal NIST endorsement of this library — the alignment with the [NCCOE Software and AI Agent Identity and Authorization](https://www.nccoe.nist.gov/projects/software-and-ai-agent-identity-and-authorization) concept paper, RFC 8693, and SP 800-63-3 is genuine and is claimed in prose, not in the package name.
+
+**Rename history** (see CHANGELOG for full details):
+- **v0.0.1**: `agent-passport` — first public alpha.
+- **v0.1.0**: renamed to `nist-agent-passport` — intended to signal NIST 800-63 lineage; later found to overclaim per the policy above.
+- **v0.2.0**: renamed back to `agent-passport`. **Never released to PyPI** — the project name turned out to be unobtainable (PyPI similarity check vs. `agent-passport-system`).
+- **v0.2.1**: renamed to `csp-agent-passport`. First PyPI release under the new name. GitHub repository renamed at the same time (URL: https://github.com/antspriggs/csp-agent-passport; GitHub serves permanent redirects on the previous URL).
+
+**Existing users upgrading from any prior name:**
+- Imports: `from nist_agent_passport import ...` or `from agent_passport import ...` → `from csp_agent_passport import ...`.
+- CLI: `nist-agent-passport ...` or `agent-passport ...` → `csp-agent-passport ...`.
+- XDG state auto-migrates: on first run, `_storage.xdg_data_dir()` checks for both legacy directories (`$XDG_DATA_HOME/agent-passport/` then `$XDG_DATA_HOME/nist-agent-passport/`) and renames whichever exists to `$XDG_DATA_HOME/csp-agent-passport/`. The current dir is never clobbered if it already exists. Five tests in `tests/test_storage_migration.py` cover the chain.
+- The namespaced claim URI `https://agent-passport.org/claims/*` was always unprefixed — **wire-compatible across every rename in this project's history**. No token-shape change.
+- Local git remotes: `git remote set-url origin https://github.com/antspriggs/csp-agent-passport.git`.
 
 ---
 
@@ -36,11 +57,22 @@ Build on these. Do not invent new crypto, new claim names that duplicate existin
 - [RFC 7519 — JSON Web Token (JWT)](https://datatracker.ietf.org/doc/html/rfc7519) — token format.
 - [RFC 7515 — JSON Web Signature (JWS)](https://datatracker.ietf.org/doc/html/rfc7515) — signing.
 - [RFC 8693 — OAuth 2.0 Token Exchange](https://datatracker.ietf.org/doc/html/rfc8693) — the model for exchanging an OIDC ID token for a delegation token. The `act` claim ([§4.1](https://datatracker.ietf.org/doc/html/rfc8693#section-4.1)) is the standard way to express "agent acting on behalf of user."
-- [RFC 8485 — Vectors of Trust](https://datatracker.ietf.org/doc/html/rfc8485) — `vot`/`vtm`/`vtr` for expressing identity assurance in OIDC. Use these where ID.me supports them; otherwise carry their `acr` value forward.
+- [RFC 8485 — Vectors of Trust](https://datatracker.ietf.org/doc/html/rfc8485) — `vot`/`vtm`/`vtr` for expressing identity assurance in OIDC. **Optional, input-side only.** The active 2025–2026 agent-identity drafts (OpenID whitepaper, `draft-klrc-aiagent-auth`, AuthZEN, WIMSE) do not cite VoT; the de facto vocabulary is OIDC `acr` + IDA `verified_claims`. Read `vot/vtm/vtr` from the CSP if it emits them, but the canonical assurance representation in the Passport is IAL/AAL/FAL numerics. See "Adjacent OSS and forward-looking standards" below.
 - [NIST SP 800-63-3 — Digital Identity Guidelines](https://pages.nist.gov/800-63-3/) — defines IAL (Identity Assurance Level), AAL (Authenticator Assurance Level), FAL (Federation Assurance Level). The whole point of this project is to propagate these levels into the agent's delegation token.
 - [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html) — the user-authentication step.
 
 If a need arises that an existing RFC covers, use the RFC. New claim names are a last resort and must be namespaced (e.g., `https://agent-passport.org/claims/agent_id`).
+
+### CSP configuration: well-known discovery only
+
+CSPs are configured by their **issuer URL** (or by an explicit discovery URL when the CSP doesn't follow the default path). The OIDC client adapter MUST resolve every other endpoint — `jwks_uri`, `token_endpoint`, `authorization_endpoint`, `userinfo_endpoint`, supported algorithms, supported `acr` values — by fetching the discovery document at `<issuer>/.well-known/openid-configuration` ([OIDC Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html); [RFC 8414](https://datatracker.ietf.org/doc/html/rfc8414) for the analogous OAuth case at `/.well-known/oauth-authorization-server`).
+
+Consequences:
+- `.env.example` has one URL per CSP, not five.
+- Adding a new CSP is a configuration change, not a code change. Any OIDC + PKCE provider works.
+- CSP endpoint changes (a token URL moving, a key rotation in JWKS) are picked up automatically; the adapter re-fetches discovery and JWKS on `kid` miss.
+- Tests for the adapter verify it consumes discovery metadata; they MUST fail if the adapter ever hardcodes an endpoint URL.
+- Cache discovery for a short TTL (default 5 minutes) and JWKS by `kid` (refresh on miss). Never cache without an invalidation path.
 
 ---
 
@@ -52,7 +84,7 @@ Three components, in one package:
                                         ┌──────────────────────┐
                   OIDC ID token         │                      │
    ┌──────────┐  (with acr=ial2)        │   Token Issuer       │
-   │  ID.me   ├────────────────────────▶│   (RFC 8693 token    │
+   │   CSP    ├────────────────────────▶│   (RFC 8693 token    │
    └──────────┘                         │    exchange)         │
                                         │                      │
                                         └──────────┬───────────┘
@@ -87,7 +119,18 @@ Three components, in one package:
 
 **Verifier**: a library and a CLI that any downstream service can use to validate a delegation token. Returns either a structured `VerifiedPassport` object (principal, agent, scope, chain, IAL/AAL) or a typed error.
 
-**OIDC client adapter**: knows how to talk to ID.me (and to a hermetic mock provider for tests). Maps ID.me's `acr` values into the canonical IAL/AAL representation Agent Passport uses internally.
+**OIDC client adapter**: knows how to talk to a CSP via OIDC + PKCE (and to a hermetic mock provider for tests). Maps the CSP's `acr` values into the canonical IAL/AAL/FAL representation Agent Passport uses internally.
+
+### Key management (v0)
+
+The issuer holds a single signing keypair. v0 ships the simplest viable story:
+
+- An RSA-2048 (or Ed25519) keypair is generated at issuer startup if no key is configured, or loaded from a path supplied via env var (`AGENT_PASSPORT_SIGNING_KEY`).
+- The corresponding public key is published as JWKS at `<issuer>/.well-known/jwks.json`. The `kid` is the SHA-256 thumbprint of the JWK (RFC 7638).
+- Verifiers fetch JWKS over HTTPS, cache by `kid`, and refresh on `kid` miss. Cache TTL defaults to 1 hour.
+- **Key rotation, multi-key sets, hardware-backed storage, and HSM integration are explicitly deferred.** The `keys.py` module is structured so a future `KeyStore` interface can be substituted without touching `issuer.py` or `verifier.py`.
+
+The verifier's `KeyStore` is an injected dependency, not a global. Tests pass an in-memory store; the CLI defaults to fetching from the configured issuer URL.
 
 ---
 
@@ -97,14 +140,14 @@ A delegation JWT carries:
 
 **Standard JWT claims (RFC 7519):**
 - `iss` — the Agent Passport issuer URL.
-- `sub` — pairwise subject identifier from the upstream CSP. Never the user's email or government ID.
-- `aud` — the verifier audience (e.g., the MCP server's identifier).
+- `sub` — pairwise subject identifier from the upstream CSP. Never the user's email or government ID. Most CSPs issue `sub` per relying party (not per relying-party-plus-agent), so two delegation tokens minted for the same user but different agents will share `sub`. Use `jti` + `agent_id` to distinguish sessions in audit logs.
+- `aud` — the verifier audience. **One audience = one server.** For an MCP server with many tools, `aud` identifies the *server* (e.g., `https://mcp.example.com/`); the specific tools the agent may invoke are expressed via `tool_scope`. `aud` is a single string in v0, not an array; verifiers do exact-match. Cross-server delegation requires minting a separate token per audience.
 - `iat`, `exp`, `nbf` — short lifetime; default 15 minutes for top-level, 5 minutes for sub-delegated.
-- `jti` — unique token ID; used for revocation and as `parent_jti` in children.
+- `jti` — unique token ID. Carried into children as `parent_jti` and used as the audit-log correlation key. v0 has **no revocation endpoint** — short TTLs are the sole defense against compromised tokens. RFC 7662 introspection is on the roadmap; until then, `ttl` is your blast-radius knob.
 
-**Identity assurance (RFC 8485 + NIST SP 800-63-3):**
-- `acr` — pass through the upstream CSP's `acr` value verbatim (e.g., `http://idmanagement.gov/ns/assurance/loa/2` or whatever ID.me returns for IAL2).
-- `ial`, `aal`, `fal` — canonical numeric levels (1, 2, or 3) that the verifier can compare against policy. Derived from `acr`.
+**Identity assurance (RFC 8485 + NIST SP 800-63-3) — all optional:**
+- `acr` — pass through the upstream CSP's `acr` value verbatim (e.g., `http://idmanagement.gov/ns/assurance/ial/2`). **Optional**: OIDC's `acr` is itself optional, and many CSPs / deployments use scope-driven auth without asserting identity assurance. When absent, this claim is omitted from the JWT.
+- `ial`, `aal`, `fal` — canonical numeric levels (1, 2, or 3) that the verifier can compare against policy. Derived from `acr`. **All optional**: when the upstream `acr` is absent, these are too. A `VerificationPolicy` with `require_ial=0` (the default) accepts tokens with no IAL claim — scope-driven auth is the supported default. A verifier that needs identity assurance sets `require_ial=1`/`2`/`3`, in which case the token MUST carry at least that level (a Passport with no `ial` is rejected).
 
 **Delegation (RFC 8693 §4.1):**
 - `act` — an object describing the agent acting on the principal's behalf. Per RFC 8693, may itself contain a nested `act` for chains.
@@ -112,71 +155,66 @@ A delegation JWT carries:
 **Agent-specific (namespaced):**
 - `https://agent-passport.org/claims/agent_id` — stable identifier for the agent instance.
 - `https://agent-passport.org/claims/agent_model` — e.g., `claude-opus-4-7`, `gpt-5`.
-- `https://agent-passport.org/claims/tool_scope` — explicit allowlist of tool/endpoint patterns. Strings, glob-style. **Empty array = no authority.**
-- `https://agent-passport.org/claims/task_purpose` — short human-readable string explaining intent ("book a flight from SFO to JFK on Tuesday"). Used in audit logs, surfaced to verifiers for policy.
+- `https://agent-passport.org/claims/tool_scope` — explicit allowlist of tool/endpoint patterns. Strings, matched with Python `fnmatch` semantics (`*` matches within a path segment, no `**` recursion, case-sensitive). Pattern syntax is fixed; no regex, no URI templates. **Empty array = no authority.**
+- `https://agent-passport.org/claims/task_purpose` — short human-readable string explaining intent ("book a flight from SFO to JFK on Tuesday"). **Audit-only in v0.** Surfaced to verifiers and written to logs, but the verifier MUST NOT make access-control decisions on it. All policy enforcement goes through `tool_scope`. Treating natural-language intent as a security boundary is a footgun; if a future version wants policy on intent, it will use a structured claim, not free text.
 - `https://agent-passport.org/claims/parent_jti` — `jti` of the parent token in a delegation chain. Absent on root tokens.
 
 **Scope attenuation rule**: a child token's `tool_scope` MUST be a subset of its parent's. The issuer enforces this when minting children. The verifier re-checks at validation time when walking chains.
 
 ---
 
-## ID.me integration
+## CSP integration
 
-ID.me sandbox credentials are being provisioned by the project sponsor. **Do not paste them into chat or commit them.** They live in a `.env` file at the project root, loaded at runtime via `python-dotenv` or equivalent. `.env` is in `.gitignore`. Provide a `.env.example` with placeholder values.
+CSP credentials live in a `.env` file at the project root, loaded at runtime via `python-dotenv`. `.env` is in `.gitignore`; `.env.example` ships placeholder values. **Do not paste credentials into chat or commit them.**
+
+Agent Passport speaks generic OIDC + PKCE — any provider works. There are no CSP-specific adapters in the codebase: configuration is discovery-driven, the `acr` → IAL/AAL/FAL translation is one pluggable function, and the public API mentions no vendor names. Agent Passport speaks IAL/AAL/FAL only — no LOA terminology in any user-facing surface; the few legacy IAF `…/loa/N` URIs that some providers still emit are absorbed by the default mapping and never enter the rest of the system.
 
 **Required env vars:**
 ```
-IDME_CLIENT_ID=...
-IDME_CLIENT_SECRET=...
-IDME_REDIRECT_URI=http://localhost:8765/callback
-IDME_DISCOVERY_URL=https://api.id.me/.well-known/openid-configuration  # verify exact URL from docs
-IDME_SCOPES=openid,...                                                  # verify exact scope names from docs
+CSP_CLIENT_ID=...
+CSP_CLIENT_SECRET=...
+CSP_REDIRECT_URI=http://localhost:8765/callback
+CSP_DISCOVERY_URL=https://your-csp.example.com/.well-known/openid-configuration
+CSP_SCOPES="openid ..."                          # space-separated per OIDC; verify exact scope names from your CSP's docs
+CSP_ACR_MAPPING=ial                              # ial (default) | pkg.module:func_name
 ```
 
-**Documentation to read before writing the adapter:**
-- [docs.id.me — OIDC / OpenID Connect configuration](https://docs.id.me/guides/open-id-connect/configuration)
-- [docs.id.me — OAuth 2.0 overview](https://docs.id.me/guides/o-auth-2-0/overview)
-- [developers.id.me — Federated Protocols / OIDC](https://developers.id.me/documentation/federated-protocols/oidc)
-- [developers.id.me — Identity Verification OIDC](https://developers.id.me/documentation/identity/oidc/overview)
-- [developers.id.me — MFA OIDC overview](https://developers.id.me/documentation/mfa/oidc/overview)
-- [docs.id.me — OIDC Ruby sample code](https://docs.id.me/integrations/sample-code/options/oidc-ruby) — useful as a reference implementation.
+**ACR mapping (`acr` → `AssuranceLevels`):** implemented as `ial_acr_mapping` in `src/csp_agent_passport/oidc/base.py`. Single function + a translation table — read it in one screen, audit it in two minutes. Handles:
+- The canonical NIST 800-63-3 `http://idmanagement.gov/ns/assurance/ial/N` URIs (for N in 1–3).
+- The legacy IAF `…/loa/1` and `…/loa/3` URIs some CSPs still emit, translated conservatively: `…/loa/3` → IAL-2 (documents proofed + MFA), **not** IAL-3 (which requires in-person supervised proofing). A downstream verifier with `require_ial=3` therefore correctly rejects legacy LOA-3 tokens.
 
-**Known ID.me-specific facts (from their docs):**
-- Built on OAuth 2 (draft-22).
-- `access_token` lifetime is 5 minutes — design refresh strategy accordingly. Note: Agent Passport delegation tokens are independent of this; the ID.me access token is only used to fetch the ID token / userinfo at the start of a session.
-- Both full-page redirect and popup auth flows are supported.
-- Exact `acr` URI strings, scope names, and userinfo claim shapes vary by ID.me product line — read the discovery doc and the configuration page for ground truth before hardcoding anything.
-
-**Mapping ID.me `acr` → canonical IAL/AAL/FAL:** implement this in a single `idme_adapter.py` function so the mapping is auditable and changes when ID.me updates its `acr` URIs don't ripple through the codebase.
+When a CSP emits ACR URIs outside this set, write your own `AcrMapping` function and point `CSP_ACR_MAPPING` at it (e.g. `CSP_ACR_MAPPING=mypackage.csp:my_mapping`). Do not edit the built-in translations in place — every other deployment depends on those defaults staying conservative.
 
 ---
 
 ## Mock OIDC provider
 
-A small in-process OIDC provider that issues realistic ID tokens with proper VoT/`acr` claims. Its only job is to make the test suite hermetic so contributors don't need ID.me sandbox credentials to run tests. It is **not** a security boundary, **not** a quickstart for end users (the README's quickstart should target real ID.me), and **not** shipped as a public-facing component.
+A small in-process OIDC provider that issues realistic ID tokens with proper VoT/`acr` claims. Its only job is to make the test suite hermetic so contributors don't need real CSP credentials to run tests. It is **not** a security boundary, **not** a quickstart for end users (the README's quickstart targets a real CSP), and **not** shipped as a public-facing component.
 
 Lives in `tests/fixtures/mock_oidc/`. Uses an ephemeral RSA keypair generated at test-suite startup. Publishes a JWKS endpoint on a random localhost port so the issuer can validate tokens against it normally.
+
+**Onramp split:** the README quickstart targets a real CSP — adopters need to see the real flow. The mock provider is the *contributor* onramp: a fresh checkout runs the full test suite end-to-end with no external creds via the mock. Anyone touching the library should be able to make changes and run `pytest` without applying for any CSP sandbox account first.
 
 ---
 
 ## CLI surface
 
 ```
-agent-passport login                 # runs the OIDC dance against ID.me, stores ID token locally
-agent-passport issue                 # mints a delegation token from the stored ID token
+csp-agent-passport login                 # runs the OIDC dance against the configured CSP, stores ID token locally
+csp-agent-passport issue                 # mints a delegation token from the stored ID token
     --agent-id <id>
     --agent-model <model>
     --tool-scope <pattern>           # repeatable
     --task-purpose <string>
     --aud <audience>
     --ttl <seconds>                  # default 900
-agent-passport verify <token>        # validates signature/expiry/scope; prints VerifiedPassport
+csp-agent-passport verify <token>        # validates signature/expiry/scope; prints VerifiedPassport
     --require-ial <n>
     --require-aal <n>
     --aud <audience>
     --required-scope <pattern>
-agent-passport inspect <token>       # decodes and pretty-prints all claims, including the chain
-agent-passport delegate <token>      # mints a child token; --tool-scope must be a subset
+csp-agent-passport inspect <token>       # decodes and pretty-prints all claims, including the chain
+csp-agent-passport delegate <token>      # mints a child token; --tool-scope must be a subset
     --agent-id <id>
     --tool-scope <pattern>
     --ttl <seconds>                  # default 300
@@ -201,14 +239,14 @@ Examples should be runnable standalone, with comments that explain the standards
 ## Project layout
 
 ```
-agent-passport/
+csp-agent-passport/
 ├── pyproject.toml
 ├── README.md                  # public-facing: rationale, quickstart, NIST refs
 ├── CLAUDE.md                  # this file
 ├── .env.example
 ├── .gitignore                 # excludes .env, *.pem, dist/, etc.
 ├── src/
-│   └── agent_passport/
+│   └── csp_agent_passport/
 │       ├── __init__.py
 │       ├── claims.py          # Pydantic models for the token claim schema
 │       ├── issuer.py          # token-exchange logic
@@ -217,9 +255,9 @@ agent-passport/
 │       ├── keys.py            # JWK loading, JWKS publishing
 │       ├── oidc/
 │       │   ├── __init__.py
-│       │   ├── base.py        # generic OIDC client interface
-│       │   └── idme_adapter.py
-│       └── cli.py             # Click- or Typer-based CLI
+│       │   ├── base.py        # OIDCClient + AcrMapping + ial_acr_mapping
+│       │   └── validator.py   # IDTokenValidator (discovery + JWKS)
+│       └── cli.py             # Typer-based CLI
 ├── examples/
 │   ├── mcp_middleware.py
 │   ├── langchain_tool_wrapper.py
@@ -230,8 +268,8 @@ agent-passport/
     ├── test_claims.py
     ├── test_issuer.py
     ├── test_verifier.py
-    ├── test_chain_attenuation.py
-    └── test_idme_adapter.py
+    ├── test_oidc_validator.py
+    └── test_chain_attenuation.py
 ```
 
 ---
@@ -246,7 +284,7 @@ pip install -e '.[dev]'
 pytest
 
 # run tests with coverage
-pytest --cov=agent_passport --cov-report=term-missing
+pytest --cov=csp_agent_passport --cov-report=term-missing
 
 # lint and format
 ruff check .
@@ -256,10 +294,12 @@ ruff format .
 mypy src/
 
 # run the CLI from source
-python -m agent_passport --help
+python -m csp_agent_passport --help
 ```
 
-Use Python 3.11+. Use Pydantic v2. Use `authlib` or `pyjwt` for JWT handling — do not implement JOSE primitives by hand. Use `httpx` for HTTP. Use `Typer` for the CLI (better ergonomics than Click for typed commands).
+Use Python 3.11+. Use Pydantic v2. Use `joserfc` for JWT/JOSE handling (single dependency, JWS + JWK + JWT in one place; ships `py.typed`; the modern successor to `authlib.jose`, written by the same author — do not pull in `authlib` or `pyjwt`). Use `httpx` for HTTP. Use `Typer` for the CLI (better ergonomics than Click for typed commands).
+
+Pydantic v2 + `mypy --strict` mostly works but its plugin occasionally needs help on generic models and discriminated unions. A narrow `# type: ignore[...]` with a specific error code is acceptable on Pydantic model definitions when the alternative is restructuring the schema for the type checker; do not blanket-ignore an entire file.
 
 ---
 
@@ -280,9 +320,9 @@ Use Python 3.11+. Use Pydantic v2. Use `authlib` or `pyjwt` for JWT handling —
 - **Never log a full token at INFO or above.** Log `jti`, `sub`, `agent_id`, `iss`, `aud`. The full token is a bearer credential.
 - **Never accept `alg: none`.** Reject any JWS with no signature. Pin allowed algorithms to `RS256`, `ES256`, `EdDSA`.
 - **Verify `iss` and `aud` strictly.** Allowlist of issuers, exact-match on audience.
-- **Enforce `exp` and `nbf` with a small clock-skew tolerance** (≤30 seconds).
+- **Enforce `exp` and `nbf` with a small clock-skew tolerance.** Configurable per `Verifier` instance via a `clock_skew: timedelta` constructor arg; default 30 seconds, hard ceiling 120 seconds (the constructor rejects larger values). Different deployments need different tolerances; do not bake the default into call sites.
 - **Scope attenuation is enforced at issuance AND at verification.** Defense in depth.
-- **The CSP's `acr` is the source of truth for IAL.** Do not let a downstream agent claim a higher IAL than the root token — verifier checks that the chain's IAL is monotonically non-increasing.
+- **The CSP's `acr` is the source of truth for IAL.** Do not let a downstream agent claim a higher IAL than the root token — verifier checks that the chain's IAL is monotonically non-increasing. The issuer sets `ial`/`aal`/`fal` on the root token from the CSP's `acr`; child tokens **inherit** these values from the parent and cannot raise them. The delegating agent has no input here — there is no API for "delegate at a lower IAL," because `ial` describes how the *principal* was proofed, not the agent's confidence in the delegation. Worked example: root token has `ial=2`. Agent A mints a child for Agent B; the child carries `ial=2`. A verifier with policy `require-ial >= 3` rejects both. A verifier with `require-ial >= 2` accepts both. The chain-walk re-checks at each hop and rejects on the first violation.
 - **Reject tokens whose `tool_scope` claims `*` unless the verifier's policy explicitly opts in.** The default-deny stance is part of the value prop.
 
 ---
@@ -293,14 +333,14 @@ Work in this order; each step has a natural test gate:
 
 1. **Scaffold the package** — `pyproject.toml`, `src/`, `tests/`, `.env.example`, `.gitignore`, basic README skeleton. Confirm `pip install -e '.[dev]'` and `pytest` (with no tests) pass.
 2. **Write the claim model** — `claims.py` with Pydantic models for `Passport`, `ActClaim`, `AgentClaims`. Round-trip tests (Passport → JWT → Passport).
-3. **Implement the verifier first, before the issuer** — write the verifier against hand-crafted test JWTs. This nails down the security contract before there's any temptation to make the issuer "just work" with the verifier's bugs.
+3. **Implement the verifier first, before the issuer** — write the verifier against hand-crafted test JWTs. This nails down the security contract before there's any temptation to make the issuer "just work" with the verifier's bugs. The verifier consumes already-canonical `ial`/`aal`/`fal` integers from the token; it does **not** know about CSP-specific `acr` URIs. The `acr` → canonical mapping is the adapter's job (step 8), performed at issuance time. This keeps the verifier independent of any specific CSP and lets step 3 proceed without the adapter existing yet.
 4. **Stand up the mock OIDC provider** — pytest fixture that boots an in-process provider on a random port with an ephemeral RSA keypair.
 5. **Implement the issuer** — RFC 8693 token exchange against the mock provider. Test the whole loop: ID token in → delegation token out → verifier accepts.
 6. **Implement chain delegation** — child-token minting, scope attenuation enforcement, chain walking on verify.
 7. **Build the CLI** — Typer-based, thin wrappers over the library.
-8. **ID.me adapter** — implement against the docs (links above), test against the mock provider with ID.me-shaped `acr` values, leave the live-sandbox test gated behind an env var so CI doesn't need creds.
+8. **CSP-agnostic ACR mapping** — `ial_acr_mapping` handles both canonical NIST 800-63-3 URIs and the legacy IAF `…/loa/1`/`…/loa/3` URIs some CSPs still emit. Test against the mock provider with realistic `acr` values; CSPs emitting other URI shapes plug in a custom `AcrMapping` via `CSP_ACR_MAPPING=pkg.module:func`.
 9. **Examples** — write the three example files. Each one should run from a clean checkout.
-10. **README** — public-facing quickstart targeting real ID.me; rationale; NIST/RFC references; pointer to CLAUDE.md for design context.
+10. **README** — public-facing quickstart targeting a real CSP; rationale; NIST/RFC references; pointer to CLAUDE.md for design context.
 11. **Polish** — ruff, mypy, coverage. Ship.
 
 ---
@@ -317,9 +357,25 @@ If a question is genuinely undecidable from those, leave a clearly-marked `# DES
 
 ---
 
+## Adjacent OSS and forward-looking standards
+
+Notes from the May 2026 IETF / OpenID / commerce-protocol landscape scan. These shape near-term design choices but do not change the v0 token shape.
+
+**Closest OSS project: [ZeroID](https://github.com/highflame-ai/zeroid)** (Highflame AI, Apache-2.0, ~139 stars as of May 2026). OAuth 2.1 + RFC 8693 + `act`-chain delegation + scope attenuation + DPoP + RFC 9396 + SSF revocation; ships as a service requiring Postgres. **Does not propagate NIST 800-63 IAL/AAL/FAL** — the NIST identity-assurance contract is the differentiator that justifies a second library in this space. See [COMPARISON.md](COMPARISON.md) for the long-form positioning write-up. When considering a new feature, check ZeroID first; if they ship it well already, ask whether to replicate for library-form-factor reasons, contribute upstream, or skip because it's service-shaped.
+
+**`agentic_ctx` watch.** Amazon's [`draft-araut-oauth-transaction-tokens-for-agents`](https://datatracker.ietf.org/doc/draft-araut-oauth-transaction-tokens-for-agents/) proposes an `agentic_ctx` claim with `current_actor`, `originator`, `chain_metadata` — the closest competitor to our `act` + `parent_jti` chain metadata. If it gains WG adoption, alias our chain-metadata fields so a Passport projects mechanically into `agentic_ctx`. No token-shape change today.
+
+**Proof-of-possession is the WIMSE direction.** The IETF WIMSE WG is moving toward WIT + WPT (proof-of-possession), and AP2 already requires RFC 7800 `cnf` for autonomous mandates. Plan an optional `cnf` claim (JWK thumbprint) as a v1 hook with `VerificationPolicy.require_cnf`. Bearer remains valid for v0.
+
+**Structured intent is coming.** The FIDO Agentic Authentication TWG and the proposed IETF AUDIT BoF push toward structured intent claims. The "audit-only `task_purpose`" stance in the token claim model section is correct today — natural-language intent is a footgun as a security boundary. Plan an `intent_digest` companion claim (hash of approved intent + optional URI pointer) so the audit trail is tamper-evident without becoming policy-bearing.
+
+**Agentic commerce protocols are converging on a common shape.** [AP2](https://ap2-protocol.org/specification/), [ACP](https://www.agenticcommerce.dev/), [Visa TAP](https://github.com/visa/trusted-agent-protocol), and Mastercard Verifiable Intent all expect transaction caps (minor units + ISO-4217), merchant binding, short expiry, and `cnf` for autonomous agents. The `txn_constraints` / `cart_binding` / `intent_digest` / `txn_id` claims on the roadmap mirror AP2 field names so a Passport can be projected into a Payment Mandate. See the [Agentic commerce claims roadmap item](ROADMAP.md#agentic-commerce-claims).
+
+---
+
 ## References
 
-- [NIST AI Agent Standards Initiative](https://www.nist.gov/artificial-intelligence/ai-agent-standards-initiative)
+- [NIST AI Agent Standards Initiative](https://www.nist.gov/caisi/ai-agent-standards-initiative)
 - [NCCOE — Software and AI Agent Identity and Authorization](https://www.nccoe.nist.gov/projects/software-and-ai-agent-identity-and-authorization)
 - [NIST SP 800-63-3 — Digital Identity Guidelines](https://pages.nist.gov/800-63-3/)
 - [RFC 7519 — JWT](https://datatracker.ietf.org/doc/html/rfc7519)
@@ -327,5 +383,6 @@ If a question is genuinely undecidable from those, leave a clearly-marked `# DES
 - [RFC 8693 — OAuth 2.0 Token Exchange](https://datatracker.ietf.org/doc/html/rfc8693)
 - [RFC 8485 — Vectors of Trust](https://datatracker.ietf.org/doc/html/rfc8485)
 - [OpenID Connect Core 1.0](https://openid.net/specs/openid-connect-core-1_0.html)
-- [ID.me OIDC docs (overview)](https://docs.id.me/guides/open-id-connect/configuration)
-- [ID.me Developers — Federated Protocols / OIDC](https://developers.id.me/documentation/federated-protocols/oidc)
+- [OpenID Connect Discovery 1.0](https://openid.net/specs/openid-connect-discovery-1_0.html)
+- [RFC 7636 — PKCE](https://datatracker.ietf.org/doc/html/rfc7636)
+- [RFC 8252 — OAuth 2.0 for Native Apps](https://datatracker.ietf.org/doc/html/rfc8252)

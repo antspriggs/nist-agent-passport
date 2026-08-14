@@ -1,0 +1,108 @@
+name: Release
+
+# Publishes to PyPI when a GitHub Release is published. Uses PyPI Trusted
+# Publishing (OIDC) — no API token in repo secrets, no maintainer credential
+# in CI. The PyPI side requires a one-time "Trusted Publisher" registration:
+#
+#   https://pypi.org/manage/account/publishing/
+#
+# with:
+#   PyPI Project Name : csp-agent-passport
+#   Owner             : antspriggs
+#   Repository name   : csp-agent-passport
+#   Workflow filename : release.yml
+#   Environment       : pypi
+#
+# Until that registration exists, the publish step will fail with an OIDC
+# rejection — that's expected; do the registration first.
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build-and-publish:
+    name: Build + publish to PyPI
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      # Required for Trusted Publishing's OIDC exchange.
+      id-token: write
+      # Required to upload the CycloneDX SBOM as a Release asset via gh.
+      # Setting any permission explicitly disables defaults for the rest,
+      # so contents must be granted explicitly even though it'd be the
+      # repo default. (This bit cost us one release; see CHANGELOG §0.1.2.)
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          # Need full history so we can check that the tagged commit is
+          # reachable from main (see "Verify release commit is on main"
+          # below). Shallow clones don't have the ancestry to check.
+          fetch-depth: 0
+
+      - name: Verify release commit is reachable from main
+        # Defense in depth: even if someone created a tag pointing at an
+        # unmerged commit (which branch protection on main doesn't prevent
+        # — tags are a separate namespace), this step refuses to publish.
+        # Releases MUST come from PR-merged commits on main; this re-asserts
+        # that invariant from inside the release workflow itself.
+        #
+        # Combined with:
+        #   - main branch protection (PRs required, admin-enforced)
+        #   - the pypi environment's deployment-branches policy
+        #     restricting deploys to `v*` tag refs
+        # the chain becomes:
+        #   commit → PR → CI green → merged to main → tag from main →
+        #   release → THIS GUARD → env policy → manual approval → publish.
+        # Independent failure modes at every step.
+        run: |
+          git fetch origin main:refs/remotes/origin/main --quiet
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::release commit ${GITHUB_SHA} is not reachable from main."
+            echo "::error::Releases must be cut from commits merged to main via PR."
+            echo "::error::To fix: open a PR, get it merged, then tag the merged commit."
+            exit 1
+          fi
+          echo "::notice::release commit ${GITHUB_SHA} verified on main (PR-merged)."
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+
+      - name: Build sdist + wheel
+        run: |
+          pip install --upgrade build
+          python -m build
+
+      - name: Verify built artifacts match the release tag
+        run: |
+          ls -la dist/
+          # Tag without leading 'v', e.g. v0.1.0 -> 0.1.0.
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          if ! ls dist/csp_agent_passport-${TAG_VERSION}-*.whl > /dev/null 2>&1; then
+            echo "FATAL: dist/ does not contain a wheel matching tag version $TAG_VERSION"
+            exit 1
+          fi
+
+      - name: Publish to PyPI (Trusted Publishing, no API token)
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+      - name: Generate CycloneDX SBOM
+        # Install the just-built wheel into the runner's venv so the SBOM
+        # reflects the actual resolved dependency tree users will get.
+        # CycloneDX `environment` mode reads installed-package metadata.
+        run: |
+          pip install cyclonedx-bom
+          pip install dist/csp_agent_passport-*.whl
+          cyclonedx-py environment \
+            --output-format json \
+            --output-file "csp-agent-passport-${GITHUB_REF_NAME#v}.cdx.json"
+
+      - name: Attach SBOM to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${GITHUB_REF_NAME}" \
+            "csp-agent-passport-${GITHUB_REF_NAME#v}.cdx.json" \
+            --clobber  # idempotent on workflow re-runs
