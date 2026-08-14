@@ -137,9 +137,14 @@ Three primitives compose to cover every use case:
 
 ```python
 from csp_agent_passport import (
-    Issuer, IssuanceRequest, DelegationRequest,
-    Verifier, VerificationPolicy, InMemoryKeyStore,
-    IDTokenValidator, ial_acr_mapping,
+    Issuer,
+    IssuanceRequest,
+    DelegationRequest,
+    Verifier,
+    VerificationPolicy,
+    InMemoryKeyStore,
+    IDTokenValidator,
+    ial_acr_mapping,
 )
 ```
 
