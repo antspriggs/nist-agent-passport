@@ -1,0 +1,21 @@
+title = "csp-agent-passport gitleaks config"
+
+# Convention: allowlist entries must be path-scoped to a specific file (or
+# narrow file set) with an inline comment justifying why the flagged value
+# is not a secret. Never add a blanket/global rule, and never disable a
+# default rule (e.g. generic-api-key) repo-wide — that silences it
+# everywhere, not just at the false-positive site.
+
+[extend]
+useDefault = true
+
+# NOTE: this must be the singular `[allowlist]` table, not `[[allowlists]]`.
+# Verified against the gitleaks version gitleaks-action@v2 actually installs
+# in CI (8.24.3) as well as 8.30.1: the plural `[[allowlists]]` array form is
+# silently dropped by 8.24.3 (entry has zero effect), while `[allowlist]`
+# works on both. `paths` and `regexes` inside one allowlist are OR'd, not
+# AND'd, so a regexes clause here would suppress matches repo-wide, not just
+# in the file the `paths` entry names -- keep this to `paths` only.
+[allowlist]
+description = '.env.example is a committed template: its CSP_CLIENT_ID/CSP_CLIENT_SECRET assignments are deliberately empty, and its only path-shaped value is the literal placeholder /path/to/private-key.pem. The real .env, *.pem, *.key, *.p12, and *.pfx are already gitignored. This entry is a documented convention template, not a live suppression: gitleaks default config already globally allowlists the ^\.env\.example$ path (confirmed via debug log "skipping file: global allowlist path=.env.example" on a scan with NO repo config present), so this entry currently matches nothing and cannot -- it exists to record the reasoning at this path and as a guard/example for the next allowlist someone adds here, not because it is load-bearing today.'
+paths = ['''^\.env\.example$''']
