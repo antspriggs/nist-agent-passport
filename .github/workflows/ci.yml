@@ -46,6 +46,11 @@ jobs:
         # install from the audit (it isn't on PyPI yet by definition).
         # We intentionally do NOT use --strict, which would also fail on
         # the editable-skip "warning" we just opted into.
+        # setuptools is upgraded first: some hosted runner images (notably
+        # 3.11) ship a setuptools with a known CVE (e.g. PYSEC-2026-3447),
+        # which would otherwise fail this audit on our own toolchain rather
+        # than a project dependency.
         run: |
+          pip install --upgrade pip setuptools
           pip install pip-audit
           pip-audit --skip-editable
